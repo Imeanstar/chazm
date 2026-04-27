@@ -4,6 +4,9 @@ create table if not exists public.hint_submissions (
   category text not null,
   hint_no integer not null check (hint_no > 0),
   hint_value text,
+  content_kind text not null default 'unknown' check (content_kind in ('text', 'image', 'unknown')),
+  content_key text,
+  body_image_url text,
   note text,
   image_url text not null,
   ocr_text text,
@@ -13,11 +16,19 @@ create table if not exists public.hint_submissions (
   reviewed_by text
 );
 
+alter table public.hint_submissions
+  add column if not exists content_kind text not null default 'unknown',
+  add column if not exists content_key text,
+  add column if not exists body_image_url text;
+
 create index if not exists hint_submissions_slot_idx
   on public.hint_submissions (category, hint_no);
 
 create index if not exists hint_submissions_status_idx
   on public.hint_submissions (status);
+
+create index if not exists hint_submissions_content_idx
+  on public.hint_submissions (category, hint_no, content_kind, content_key);
 
 insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
 values (

@@ -74,26 +74,28 @@
               </div>
             </div>
 
-            <div class="form-grid">
-              <label>
+            <div class="recognition-panel" id="recognitionPanel" hidden>
+              <div class="result-item">
                 <span>힌트 종류</span>
-                <input id="categoryInput" type="text" placeholder="예: 1일차 힌트" required />
-              </label>
-              <label>
+                <strong id="recognizedCategory">-</strong>
+              </div>
+              <div class="result-item">
                 <span>No.</span>
-                <input id="numberInput" type="number" min="1" step="1" placeholder="예: 49" required />
-              </label>
+                <strong id="recognizedNumber">-</strong>
+              </div>
+              <div class="result-item">
+                <span>힌트사진</span>
+                <strong id="recognizedKind">-</strong>
+              </div>
+              <div class="result-item result-item-wide">
+                <span>인식 내용</span>
+                <strong id="recognizedContent">-</strong>
+              </div>
+              <figure class="hint-body-preview">
+                <img id="hintBodyImage" alt="힌트사진 인식 영역" />
+                <figcaption>이 영역을 기준으로 내용 일치 여부를 비교합니다.</figcaption>
+              </figure>
             </div>
-
-            <label>
-              <span>힌트 내용</span>
-              <input id="valueInput" type="text" placeholder="글자 힌트면 글자, 이미지 힌트면 간단한 설명" />
-            </label>
-
-            <label>
-              <span>메모</span>
-              <textarea id="noteInput" rows="3" placeholder="확인에 도움이 되는 설명을 적어주세요."></textarea>
-            </label>
 
             <div class="form-actions">
               <button class="primary-button" type="submit">제보 등록</button>

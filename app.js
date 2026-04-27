@@ -10,6 +10,7 @@ const state = {
   submissions: [],
   imageData: "",
   ocrText: "",
+  recognition: null,
   activeTab: "upload",
   selectedCategory: "",
   search: "",
@@ -38,10 +39,12 @@ const els = {
   imagePreview: document.querySelector("#imagePreview"),
   ocrText: document.querySelector("#ocrText"),
   ocrStatus: document.querySelector("#ocrStatus"),
-  categoryInput: document.querySelector("#categoryInput"),
-  numberInput: document.querySelector("#numberInput"),
-  valueInput: document.querySelector("#valueInput"),
-  noteInput: document.querySelector("#noteInput"),
+  recognitionPanel: document.querySelector("#recognitionPanel"),
+  recognizedCategory: document.querySelector("#recognizedCategory"),
+  recognizedNumber: document.querySelector("#recognizedNumber"),
+  recognizedKind: document.querySelector("#recognizedKind"),
+  recognizedContent: document.querySelector("#recognizedContent"),
+  hintBodyImage: document.querySelector("#hintBodyImage"),
   clearFormButton: document.querySelector("#clearFormButton"),
   boardTitle: document.querySelector("#boardTitle"),
   boardSearchInput: document.querySelector("#boardSearchInput"),
@@ -72,6 +75,7 @@ function escapeHtml(value) {
 function normalizeCategory(value) {
   return String(value || "")
     .replace(/\s+/g, " ")
+    .replace(/^[^\w가-힣]+/g, "")
     .replace(/\s*No\s*\.?\s*\d+.*/i, "")
     .trim();
 }
@@ -85,16 +89,19 @@ function parseHeader(text) {
   const cleaned = String(text || "")
     .replace(/[|｜]/g, " ")
     .replace(/[０-９]/g, (char) => String.fromCharCode(char.charCodeAt(0) - 0xfee0))
+    .replace(/[Oo][.\s]*(\d)/g, "No.$1")
     .replace(/[NＮ][oO0Ｏ]\s*[.:：]?\s*/gi, "No.")
     .replace(/\s+/g, " ")
     .trim();
 
-  const match = cleaned.match(/(.+?)\s*No\.?\s*(\d{1,3})/i);
+  const match = cleaned.match(/(.+?)\s*No\.?\s*(\d{0,3})/i);
   if (!match) return { category: "", number: "" };
 
+  const category = normalizeCategory(match[1]);
+  const number = normalizeNumber(match[2] || "1");
   return {
-    category: normalizeCategory(match[1]),
-    number: normalizeNumber(match[2]),
+    category,
+    number,
   };
 }
 
@@ -157,6 +164,9 @@ async function loadSubmissions() {
     category: row.category,
     number: row.hint_no,
     value: row.hint_value || "",
+    contentKind: row.content_kind || "unknown",
+    contentKey: row.content_key || "",
+    bodyImageData: row.body_image_url || row.image_url || "",
     note: row.note || "",
     imageData: row.image_url || "",
     ocrText: row.ocr_text || "",
@@ -195,12 +205,29 @@ async function saveSubmission(submission) {
     imageUrl = data.publicUrl;
   }
 
+  let bodyImageUrl = submission.bodyImageData || imageUrl;
+  if (bodyImageUrl.startsWith("data:")) {
+    const bodyPath = `${submission.category}/${submission.number}/${submission.id}-body.jpg`;
+    const { error: bodyUploadError } = await state.supabase.storage
+      .from("hint-images")
+      .upload(bodyPath, dataUrlToBlob(bodyImageUrl), {
+        contentType: "image/jpeg",
+        upsert: true,
+      });
+    if (bodyUploadError) throw bodyUploadError;
+    const { data } = state.supabase.storage.from("hint-images").getPublicUrl(bodyPath);
+    bodyImageUrl = data.publicUrl;
+  }
+
   const { error } = await state.supabase.from("hint_submissions").insert({
     id: submission.id,
     nickname: submission.nickname,
     category: submission.category,
     hint_no: submission.number,
     hint_value: submission.value,
+    content_kind: submission.contentKind,
+    content_key: submission.contentKey,
+    body_image_url: bodyImageUrl,
     note: submission.note,
     image_url: imageUrl,
     ocr_text: submission.ocrText,
@@ -356,7 +383,7 @@ async function cropHintHeader(dataUrl) {
   const img = await loadImage(dataUrl);
   const rect = findHintCardRect(img);
   const cropWidth = rect.width;
-  const cropHeight = Math.min(rect.height, Math.max(86, Math.round(rect.height * 0.2)));
+  const cropHeight = Math.min(rect.height, Math.max(120, Math.round(rect.height * 0.28)));
   const scale = Math.min(3, Math.max(1, 900 / cropWidth));
   const canvas = document.createElement("canvas");
   canvas.width = Math.round(cropWidth * scale);
@@ -378,6 +405,84 @@ async function cropHintHeader(dataUrl) {
   return canvas.toDataURL("image/png");
 }
 
+async function cropHintBody(dataUrl) {
+  const img = await loadImage(dataUrl);
+  const rect = findHintCardRect(img);
+  const headerHeight = Math.round(rect.height * 0.26);
+  const paddingX = Math.round(rect.width * 0.08);
+  const paddingBottom = Math.round(rect.height * 0.05);
+  const sourceX = rect.x + paddingX;
+  const sourceY = rect.y + headerHeight;
+  const sourceWidth = Math.max(1, rect.width - paddingX * 2);
+  const sourceHeight = Math.max(1, rect.height - headerHeight - paddingBottom);
+  const scale = Math.min(2, Math.max(1, 760 / sourceWidth));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.round(sourceWidth * scale);
+  canvas.height = Math.round(sourceHeight * scale);
+  const context = canvas.getContext("2d");
+  context.fillStyle = "#fff";
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  context.drawImage(
+    img,
+    sourceX,
+    sourceY,
+    sourceWidth,
+    sourceHeight,
+    0,
+    0,
+    canvas.width,
+    canvas.height,
+  );
+  return canvas.toDataURL("image/jpeg", IMAGE_QUALITY);
+}
+
+async function analyzeHintBody(bodyDataUrl) {
+  const img = await loadImage(bodyDataUrl);
+  const canvas = document.createElement("canvas");
+  canvas.width = 180;
+  canvas.height = Math.max(1, Math.round((img.height / img.width) * canvas.width));
+  const context = canvas.getContext("2d", { willReadFrequently: true });
+  context.drawImage(img, 0, 0, canvas.width, canvas.height);
+  const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
+  let darkPixels = 0;
+
+  for (let offset = 0; offset < pixels.length; offset += 4) {
+    const red = pixels[offset];
+    const green = pixels[offset + 1];
+    const blue = pixels[offset + 2];
+    const luma = red * 0.2126 + green * 0.7152 + blue * 0.0722;
+    if (luma < 75) darkPixels += 1;
+  }
+
+  const total = pixels.length / 4;
+  return {
+    looksLikeImage: darkPixels / total > 0.16,
+  };
+}
+
+async function hashImage(dataUrl) {
+  const img = await loadImage(dataUrl);
+  const canvas = document.createElement("canvas");
+  canvas.width = 16;
+  canvas.height = 16;
+  const context = canvas.getContext("2d", { willReadFrequently: true });
+  context.drawImage(img, 0, 0, canvas.width, canvas.height);
+  const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
+  const values = [];
+  for (let offset = 0; offset < pixels.length; offset += 4) {
+    values.push(pixels[offset] * 0.2126 + pixels[offset + 1] * 0.7152 + pixels[offset + 2] * 0.0722);
+  }
+  const average = values.reduce((sum, value) => sum + value, 0) / values.length;
+  return values.map((value) => (value >= average ? "1" : "0")).join("");
+}
+
+function normalizeContentText(value) {
+  return String(value || "")
+    .replace(/[^\w가-힣]/g, "")
+    .trim()
+    .toLowerCase();
+}
+
 async function runOcr(dataUrl) {
   if (!window.Tesseract) {
     return { text: "OCR 라이브러리를 불러오지 못했습니다. 종류와 번호를 직접 입력해주세요.", parsed: {} };
@@ -395,6 +500,40 @@ async function runOcr(dataUrl) {
   return { text, parsed: parseHeader(text) };
 }
 
+async function recognizeHint(dataUrl) {
+  const header = await runOcr(dataUrl);
+  const bodyImageData = await cropHintBody(dataUrl);
+  const bodyAnalysis = await analyzeHintBody(bodyImageData);
+
+  if (bodyAnalysis.looksLikeImage) {
+    const contentKey = `image:${await hashImage(bodyImageData)}`;
+    return {
+      ...header,
+      bodyImageData,
+      contentKind: "image",
+      value: "이미지 힌트",
+      contentKey,
+    };
+  }
+
+  let bodyText = "";
+  try {
+    const bodyResult = await window.Tesseract.recognize(bodyImageData, "kor+eng");
+    bodyText = bodyResult.data.text.trim();
+  } catch (error) {
+    console.warn(error);
+  }
+
+  const normalizedText = normalizeContentText(bodyText);
+  return {
+    ...header,
+    bodyImageData,
+    contentKind: "text",
+    value: normalizedText || "글자 힌트",
+    contentKey: `text:${normalizedText}`,
+  };
+}
+
 async function processImageFile(file, sourceLabel = "이미지") {
   if (!file || !file.type.startsWith("image/")) return;
 
@@ -405,24 +544,32 @@ async function processImageFile(file, sourceLabel = "이미지") {
   els.previewCard.hidden = false;
 
   try {
-    const { text, parsed } = await runOcr(state.imageData);
-    state.ocrText = text;
-    els.ocrText.textContent = text || "텍스트를 인식하지 못했습니다.";
-    if (parsed.category) els.categoryInput.value = parsed.category;
-    if (parsed.number) els.numberInput.value = parsed.number;
-    els.ocrStatus.textContent = parsed.category && parsed.number ? "OCR 완료" : "직접 확인 필요";
-    els.ocrStatus.classList.toggle("is-warning", !(parsed.category && parsed.number));
+    const recognition = await recognizeHint(state.imageData);
+    state.recognition = recognition;
+    state.ocrText = recognition.text;
+    els.ocrText.textContent = recognition.text || "텍스트를 인식하지 못했습니다.";
+    els.recognitionPanel.hidden = false;
+    els.recognizedCategory.textContent = recognition.parsed.category || "인식 실패";
+    els.recognizedNumber.textContent = recognition.parsed.number || "인식 실패";
+    els.recognizedKind.textContent = recognition.contentKind === "image" ? "그림/사진" : "글자";
+    els.recognizedContent.textContent = recognition.value || "인식 실패";
+    els.hintBodyImage.src = recognition.bodyImageData;
+    const complete = Boolean(recognition.parsed.category && recognition.parsed.number && recognition.contentKey);
+    els.ocrStatus.textContent = complete ? "인식 완료" : "등록 불가";
+    els.ocrStatus.classList.toggle("is-warning", !complete);
   } catch (error) {
     console.warn(error);
+    state.recognition = null;
     state.ocrText = "OCR 처리 중 오류가 났습니다. 직접 입력해주세요.";
     els.ocrText.textContent = state.ocrText;
-    els.ocrStatus.textContent = "직접 확인 필요";
+    els.recognitionPanel.hidden = true;
+    els.ocrStatus.textContent = "등록 불가";
     els.ocrStatus.classList.add("is-warning");
   }
 }
 
 function userUploadCount() {
-  return state.submissions.filter((submission) => submission.nickname === state.user).length;
+  return state.submissions.filter((submission) => submission.nickname === state.user && submission.status === "accepted").length;
 }
 
 function canViewBoard() {
@@ -452,10 +599,42 @@ function getSlotMap() {
   return map;
 }
 
+function hammingDistance(left, right) {
+  if (!left || !right || left.length !== right.length) return Number.POSITIVE_INFINITY;
+  let distance = 0;
+  for (let index = 0; index < left.length; index += 1) {
+    if (left[index] !== right[index]) distance += 1;
+  }
+  return distance;
+}
+
+function isSameContent(left, right) {
+  if (!left?.contentKey || !right?.contentKey) return false;
+  if (left.contentKind !== right.contentKind) return false;
+  if (left.contentKind === "image") {
+    return hammingDistance(left.contentKey.replace("image:", ""), right.contentKey.replace("image:", "")) <= 18;
+  }
+  return left.contentKey === right.contentKey;
+}
+
+function getSlotSubmissions(category, number) {
+  return getVisibleSubmissions().filter(
+    (submission) => submission.category === category && Number(submission.number) === Number(number),
+  );
+}
+
+function decideSubmissionStatus(submission) {
+  const existing = getSlotSubmissions(submission.category, submission.number);
+  if (existing.length === 0) return "accepted";
+  return existing.some((item) => isSameContent(item, submission)) ? "accepted" : "pending";
+}
+
 function getSlotState(submissions) {
   const accepted = submissions.find((submission) => submission.status === "accepted");
-  if (submissions.length > 1) return { status: "검증중", submission: submissions[0], review: true };
-  if (accepted) return { status: "확정", submission: accepted, review: false };
+  if (accepted && submissions.every((submission) => isSameContent(accepted, submission))) {
+    return { status: "확정", submission: accepted, review: false };
+  }
+  if (submissions.length > 1 || !accepted) return { status: "검증중", submission: accepted || submissions[0], review: true };
   return { status: "등록됨", submission: submissions[0], review: false };
 }
 
@@ -582,7 +761,7 @@ function renderBoard() {
         const stateClass = slot.review ? "is-review" : "";
         return `
           <article class="slot-card ${stateClass}" data-slot="${escapeHtml(slot.key)}">
-            <img class="slot-image" src="${escapeHtml(submission.imageData)}" alt="${escapeHtml(slot.category)} No.${slot.number}" />
+            <img class="slot-image" src="${escapeHtml(submission.bodyImageData || submission.imageData)}" alt="${escapeHtml(slot.category)} No.${slot.number}" />
             <div class="slot-body">
               <div class="slot-head">
                 <strong>No.${slot.number}</strong>
@@ -602,12 +781,15 @@ function getReviewGroups() {
   return [...getSlotMap().entries()]
     .map(([key, submissions]) => {
       const [category, numberText] = key.split("::");
+      const accepted = submissions.find((submission) => submission.status === "accepted");
       return {
         key,
         category,
         number: Number(numberText),
         submissions,
-        needsReview: submissions.length > 1,
+        needsReview: accepted
+          ? submissions.some((submission) => !isSameContent(accepted, submission))
+          : submissions.length > 1,
       };
     })
     .filter((group) => group.needsReview)
@@ -624,7 +806,7 @@ function renderReview() {
           .map(
             (submission) => `
               <article class="candidate">
-                <img src="${escapeHtml(submission.imageData)}" alt="${escapeHtml(group.category)} No.${group.number} 후보" />
+                <img src="${escapeHtml(submission.bodyImageData || submission.imageData)}" alt="${escapeHtml(group.category)} No.${group.number} 후보" />
                 <p class="slot-value">${escapeHtml(submission.value || "내용 미입력")}</p>
                 <p class="slot-meta">${escapeHtml(submission.nickname)} · ${formatDate(submission.createdAt)}</p>
                 <p class="slot-meta">${escapeHtml(submission.note || "메모 없음")}</p>
@@ -657,11 +839,18 @@ function render() {
 function resetUploadForm() {
   state.imageData = "";
   state.ocrText = "";
+  state.recognition = null;
   els.previewCard.hidden = true;
+  els.recognitionPanel.hidden = true;
   els.imagePreview.removeAttribute("src");
+  els.hintBodyImage.removeAttribute("src");
   els.ocrText.textContent = "아직 인식 전입니다.";
   els.ocrStatus.textContent = "OCR 대기";
   els.ocrStatus.classList.remove("is-warning");
+  els.recognizedCategory.textContent = "-";
+  els.recognizedNumber.textContent = "-";
+  els.recognizedKind.textContent = "-";
+  els.recognizedContent.textContent = "-";
 }
 
 function openSlot(slotKey) {
@@ -671,7 +860,7 @@ function openSlot(slotKey) {
   const submission = slot.submission;
   els.slotDialogContent.innerHTML = `
     <div class="slot-detail">
-      <img src="${escapeHtml(submission.imageData)}" alt="${escapeHtml(slot.category)} No.${slot.number}" />
+      <img src="${escapeHtml(submission.bodyImageData || submission.imageData)}" alt="${escapeHtml(slot.category)} No.${slot.number}" />
       <div class="slot-detail-copy">
         <p class="eyebrow">${escapeHtml(slot.status)}</p>
         <h3>${escapeHtml(slot.category)} No.${slot.number}</h3>
@@ -741,22 +930,30 @@ document.addEventListener("paste", async (event) => {
 
 els.uploadForm.addEventListener("submit", async (event) => {
   event.preventDefault();
-  const category = normalizeCategory(els.categoryInput.value);
-  const number = normalizeNumber(els.numberInput.value);
-  if (!state.imageData || !category || !number) return;
+  const recognition = state.recognition;
+  const category = normalizeCategory(recognition?.parsed.category);
+  const number = normalizeNumber(recognition?.parsed.number);
+  if (!state.imageData || !recognition?.contentKey || !category || !number) {
+    alert("힌트 종류, 번호, 내용을 모두 인식한 뒤 등록할 수 있습니다.");
+    return;
+  }
 
   const submission = {
     id: createId(),
     nickname: state.user,
     category,
     number,
-    value: els.valueInput.value.trim(),
-    note: els.noteInput.value.trim(),
+    value: recognition.value,
+    contentKind: recognition.contentKind,
+    contentKey: recognition.contentKey,
+    bodyImageData: recognition.bodyImageData,
+    note: "",
     imageData: state.imageData,
     ocrText: state.ocrText,
-    status: "pending",
+    status: "",
     createdAt: new Date().toISOString(),
   };
+  submission.status = decideSubmissionStatus(submission);
 
   try {
     await saveSubmission(submission);
