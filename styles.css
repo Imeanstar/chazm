@@ -199,20 +199,45 @@ button {
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 8px;
   align-items: center;
-  min-height: 36px;
+  width: 100%;
+  min-height: 40px;
+  border: none;
   border-radius: 6px;
   padding: 0 10px;
-  background: #f8faf7;
+  background: transparent;
   color: var(--muted);
   font-size: 13px;
   font-weight: 800;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
 }
 
-.category-item strong {
+.category-item:hover:not([disabled]) {
+  background: #edf2ea;
+  color: var(--ink);
+}
+
+.category-item.is-active {
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
+.category-item.is-locked {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.category-name {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--ink);
+  color: inherit;
+}
+
+.lock-icon {
+  font-size: 12px;
+  opacity: 0.7;
 }
 
 .content-panel {
@@ -486,17 +511,24 @@ pre {
 
 .board-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
-  gap: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+  gap: 8px;
 }
 
 .slot-card {
-  display: grid;
+  position: relative;
   overflow: hidden;
-  min-height: 246px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--surface);
+  aspect-ratio: 1 / 1;
+  cursor: pointer;
+  transition: transform 0.12s ease, box-shadow 0.12s ease;
+}
+
+.slot-card:hover:not(.is-empty) {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 24px rgba(32, 35, 31, 0.14);
 }
 
 .slot-card.is-review {
@@ -506,20 +538,61 @@ pre {
 .slot-card.is-empty {
   border-style: dashed;
   background: rgba(255, 255, 255, 0.54);
+  cursor: default;
 }
 
-.slot-image,
-.slot-placeholder {
+.slot-image-wrap {
+  position: relative;
   width: 100%;
-  aspect-ratio: 1 / 1;
+  height: 100%;
+}
+
+.slot-image {
+  width: 100%;
+  height: 100%;
   object-fit: cover;
+  display: block;
   background: var(--surface-strong);
+}
+
+.slot-badge {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: rgba(20, 30, 24, 0.62);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 900;
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  line-height: 1.5;
+}
+
+.slot-review-badge {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: var(--warning-soft);
+  color: var(--warning);
+  font-size: 11px;
+  font-weight: 900;
+  line-height: 1.5;
 }
 
 .slot-placeholder {
   display: grid;
   place-items: center;
+  width: 100%;
+  height: 100%;
+}
+
+.slot-number {
   color: var(--muted);
+  font-size: 13px;
   font-weight: 900;
 }
 

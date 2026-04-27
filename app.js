@@ -1,6 +1,7 @@
 const LOCAL_STORAGE_KEY = "chazm-hint-board-v2";
 const SESSION_KEY = "chazm-hint-board-user";
-const DEFAULT_SLOT_COUNT = 60;
+const DEFAULT_SLOT_COUNT = 50;
+const FIXED_CATEGORIES = ["1일차", "2일차", "3일차", "4일차", "5일차", "6일차", "견적분석", "친구초대"];
 const MAX_IMAGE_SIZE = 1400;
 const IMAGE_QUALITY = 0.84;
 
@@ -79,7 +80,23 @@ function normalizeCategory(value) {
     .replace(/[\\/\u2215\u2044]+/g, " ")
     .replace(/[^\w가-힣\s.-]/g, "")
     .replace(/\s*No\s*\.?\s*\d+.*/i, "")
+    .replace(/\s+[Nn]\s*$/, "")  // OCR이 No.를 N으로 잘못 읽은 경우 제거
     .trim();
+}
+
+// 저장된 raw 카테고리문자열을 FIXED_CATEGORIES 중 하나로 매핑
+function matchFixedCategory(category) {
+  const s = String(category || "").trim();
+  if (!s) return s;
+  // 1) 정확히 일치
+  if (FIXED_CATEGORIES.includes(s)) return s;
+  // 2) 고정 카테고리로 시작하는 경우 ("1일차 힌트 N" → "1일차")
+  const byPrefix = FIXED_CATEGORIES.find((fc) => s.startsWith(fc));
+  if (byPrefix) return byPrefix;
+  // 3) 고정 카테고리를 포함하는 경우 ("견적분석 힌트" → "견적분석")
+  const byInclude = FIXED_CATEGORIES.find((fc) => s.includes(fc));
+  if (byInclude) return byInclude;
+  return s;
 }
 
 function normalizeNumber(value) {
@@ -132,7 +149,9 @@ function setupSupabase() {
 function loadLocalSubmissions() {
   try {
     const saved = JSON.parse(localStorage.getItem(LOCAL_STORAGE_KEY) || "[]");
-    state.submissions = Array.isArray(saved) ? saved : [];
+    state.submissions = Array.isArray(saved)
+      ? saved.map((s) => ({ ...s, category: matchFixedCategory(s.category) }))
+      : [];
   } catch {
     state.submissions = [];
   }
@@ -163,7 +182,7 @@ async function loadSubmissions() {
   state.submissions = data.map((row) => ({
     id: row.id,
     nickname: row.nickname,
-    category: row.category,
+    category: matchFixedCategory(row.category),  // raw OCR 값을 FIXED_CATEGORIES로 정규화
     number: row.hint_no,
     value: row.hint_value || "",
     contentKind: row.content_kind || "unknown",
@@ -384,10 +403,26 @@ function findHintCardRect(img) {
     }
   }
 
-  const rowMask = rowCounts.map((count) => count / width > 0.42);
-  const yRun = longestTrueRun(rowMask);
-  if (yRun.length < height * 0.18) {
+  // 임계값 완화: 0.28 (이전 0.42) — 카드 안 이미지 삽입 시 변두리만 핑크인 행도 허용
+  const rowMask = rowCounts.map((count) => count / width > 0.28);
+  let yRun = longestTrueRun(rowMask);
+
+  // 최소 연속 길이 완화: 7% (이전 18%) — 얇은 헤더 영역도 카드로 감지
+  if (yRun.length < height * 0.07) {
     return { x: 0, y: 0, width: img.width, height: img.height };
+  }
+
+  // 최장 블록이 이미지 하단부에 있을 경우, 더 위쪽에 첫 번째 유효 블록이 있으면 그걸 우선
+  // (모바일 전체 화면에서 카드 헤더가 항상 위쪽에 있기 때문)
+  const firstRunStart = rowMask.findIndex((v) => v);
+  if (firstRunStart !== -1 && firstRunStart < yRun.start - height * 0.1) {
+    // 첫 블록이 최장 블록보다 유의미하게 위에 있으면 첫 번째 블록 계산
+    let firstRunEnd = firstRunStart;
+    while (firstRunEnd + 1 < height && rowMask[firstRunEnd + 1]) firstRunEnd += 1;
+    const firstRunLength = firstRunEnd - firstRunStart + 1;
+    if (firstRunLength >= height * 0.04) {
+      yRun = { start: firstRunStart, end: firstRunEnd, length: firstRunLength };
+    }
   }
 
   for (let y = yRun.start; y <= yRun.end; y += 1) {
@@ -400,9 +435,10 @@ function findHintCardRect(img) {
   }
 
   const regionHeight = yRun.end - yRun.start + 1;
-  const colMask = colCounts.map((count) => count / regionHeight > 0.38);
+  // 임계값 완화: 0.24 (이전 0.38), 최소 너비 14% (이전 28%)
+  const colMask = colCounts.map((count) => count / regionHeight > 0.24);
   const xRun = longestTrueRun(colMask);
-  if (xRun.length < width * 0.28) {
+  if (xRun.length < width * 0.14) {
     return { x: 0, y: 0, width: img.width, height: img.height };
   }
 
@@ -445,11 +481,26 @@ async function cropHintBody(dataUrl) {
   const rect = findHintCardRect(img);
   const headerHeight = Math.round(rect.height * 0.26);
   const paddingX = Math.round(rect.width * 0.08);
-  const paddingBottom = Math.round(rect.height * 0.05);
+
+  // findHintCardRect가 파스텔 헤더만 감지한 경우(height ≈ 헤더 스트립)
+  // 실제 힌트 본문 이미지는 헤더 아래에 카드 너비만큼의 타원형으로 위치함
+  // 헤더만 감지되면 rect.height < rect.width * 0.6 인 경우가 많음
+  const headerOnlyDetected = rect.height < rect.width * 0.6;
+  const estimatedTotalHeight = headerOnlyDetected
+    ? Math.min(rect.width * 1.2, img.height - rect.y)  // 카드 너비 기준으로 확장
+    : rect.height;                                       // 정상 감지된 전체 카드
+
+  const paddingBottom = Math.round(estimatedTotalHeight * 0.04);
   const sourceX = rect.x + paddingX;
   const sourceY = rect.y + headerHeight;
   const sourceWidth = Math.max(1, rect.width - paddingX * 2);
-  const sourceHeight = Math.max(1, rect.height - headerHeight - paddingBottom);
+  const sourceHeight = Math.max(
+    1,
+    Math.min(
+      estimatedTotalHeight - headerHeight - paddingBottom,
+      img.height - sourceY - 4,
+    ),
+  );
   const scale = Math.min(2, Math.max(1, 760 / sourceWidth));
   const canvas = document.createElement("canvas");
   canvas.width = Math.round(sourceWidth * scale);
@@ -479,20 +530,44 @@ async function analyzeHintBody(bodyDataUrl) {
   const context = canvas.getContext("2d", { willReadFrequently: true });
   context.drawImage(img, 0, 0, canvas.width, canvas.height);
   const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
+  const total = pixels.length / 4;
+
   let darkPixels = 0;
+  let lumaPrev = -1;
+  let lumaVarianceSum = 0;  // 인접 픽셀 간 밝기 차이 합계
+  let saturatedPixels = 0; // 체도 높은 픽셀 수 (사진에 많음)
 
   for (let offset = 0; offset < pixels.length; offset += 4) {
     const red = pixels[offset];
     const green = pixels[offset + 1];
     const blue = pixels[offset + 2];
     const luma = red * 0.2126 + green * 0.7152 + blue * 0.0722;
+
     if (luma < 75) darkPixels += 1;
+
+    if (lumaPrev >= 0) lumaVarianceSum += Math.abs(luma - lumaPrev);
+    lumaPrev = luma;
+
+    // 체도 측정: max 채널과 min 채널의 차 / max
+    const maxC = Math.max(red, green, blue);
+    const minC = Math.min(red, green, blue);
+    if (maxC > 30 && (maxC - minC) / maxC > 0.25) saturatedPixels += 1;
   }
 
-  const total = pixels.length / 4;
-  return {
-    looksLikeImage: darkPixels / total > 0.16,
-  };
+  const darkRatio = darkPixels / total;
+  const avgVariance = lumaVarianceSum / total; // 픽셀간 평균 밝기 진동
+  const satRatio = saturatedPixels / total;    // 체도있는 픽셀 비율
+
+  // 이미지 힙트 판단 조건 (상아→or 관계)
+  // 1) 어두운 픽셔 많음 (김은 배경 사진)
+  // 2) 픽셌간 밝기 변화가 큼음 (복잡한 사진)
+  // 3) 체도있는 픽셌이 많음 (컴러 사진)
+  const looksLikeImage =
+    darkRatio > 0.13 ||
+    avgVariance > 14 ||
+    satRatio > 0.30;
+
+  return { looksLikeImage };
 }
 
 async function hashImage(dataUrl) {
@@ -596,8 +671,9 @@ async function recognizeHint(dataUrl) {
   let bodyText = "";
   try {
     const bodyOcrImage = await binarizeForOcr(bodyImageData);
+    // PSM 6: 균일한 텍스트 블록으로 인식 (단어 단위 PSM 8보다 한글 인식 정확도 높음)
     const bodyResult = await window.Tesseract.recognize(bodyOcrImage, "kor+eng", {
-      tessedit_pageseg_mode: "8",
+      tessedit_pageseg_mode: "6",
     });
     bodyText = bodyResult.data.text.trim();
   } catch (error) {
@@ -654,6 +730,16 @@ function userUploadCount() {
 
 function canViewBoard() {
   return state.isAdmin || userUploadCount() > 0;
+}
+
+function canViewCategory(category) {
+  if (state.isAdmin) return true;
+  return state.submissions.some(
+    (s) =>
+      matchFixedCategory(s.category) === category &&
+      s.nickname === state.user &&
+      s.status === "accepted",
+  );
 }
 
 function getVisibleSubmissions() {
@@ -796,26 +882,44 @@ function renderTabs() {
 }
 
 function renderCategories() {
-  const categories = getCategories();
-  els.categoryList.innerHTML = categories
-    .map(([category, count]) => `<div class="category-item"><strong>${escapeHtml(category)}</strong><span>${count}</span></div>`)
-    .join("");
-
-  const current = els.boardCategorySelect.value;
-  els.boardCategorySelect.innerHTML = [
-    `<option value="">전체 종류</option>`,
-    ...categories.map(([category]) => `<option value="${escapeHtml(category)}">${escapeHtml(category)}</option>`),
-  ].join("");
-  els.boardCategorySelect.value = categories.some(([category]) => category === current) ? current : "";
+  els.categoryList.innerHTML = FIXED_CATEGORIES.map((category) => {
+    const accessible = canViewCategory(category);
+    const isActive = state.selectedCategory === category;
+    return `<button
+      class="category-item${isActive ? " is-active" : ""}${!accessible ? " is-locked" : ""}"
+      type="button"
+      data-category="${escapeHtml(category)}"
+      ${!accessible ? "disabled" : ""}
+    >
+      <span class="category-name">${escapeHtml(category)}</span>
+      ${!accessible ? `<span class="lock-icon" aria-hidden="true">🔒</span>` : ""}
+    </button>`;
+  }).join("");
 }
 
 function renderBoard() {
+  // 선택된 카테고리가 없거나 접근 불가이면 첫 번째 접근 가능 카테고리로 자동 이동
+  if (!state.selectedCategory || !canViewCategory(state.selectedCategory)) {
+    state.selectedCategory = FIXED_CATEGORIES.find(canViewCategory) || "";
+  }
+
   const allowed = canViewBoard();
   els.lockedState.hidden = allowed;
   els.boardGrid.hidden = !allowed;
   els.boardTitle.textContent = state.selectedCategory ? `${state.selectedCategory} 보드` : "힌트 보드";
+
   if (!allowed) {
     els.boardGrid.innerHTML = "";
+    return;
+  }
+
+  if (!state.selectedCategory) {
+    els.boardGrid.innerHTML = `<p class="locked-state"><strong>왼쪽에서 카테고리를 선택해주세요.</strong></p>`;
+    return;
+  }
+
+  if (!canViewCategory(state.selectedCategory)) {
+    els.boardGrid.innerHTML = `<p class="locked-state"><strong>이 카테고리는 해당 힌트를 제보한 뒤 열람할 수 있습니다.</strong></p>`;
     return;
   }
 
@@ -824,37 +928,21 @@ function renderBoard() {
     slots
       .map((slot) => {
         if (slot.empty) {
-          return `
-            <article class="slot-card is-empty">
-              <div class="slot-placeholder">No.${slot.number}</div>
-              <div class="slot-body">
-                <div class="slot-head">
-                  <strong>No.${slot.number}</strong>
-                  <span class="slot-state is-empty">비어있음</span>
-                </div>
-                <p class="slot-meta">${escapeHtml(slot.category)}</p>
-              </div>
-            </article>
-          `;
+          return `<article class="slot-card is-empty"><div class="slot-placeholder"><span class="slot-number">No.${slot.number}</span></div></article>`;
         }
         const submission = slot.submission;
-        const stateClass = slot.review ? "is-review" : "";
+        const reviewClass = slot.review ? " is-review" : "";
         return `
-          <article class="slot-card ${stateClass}" data-slot="${escapeHtml(slot.key)}">
-            <img class="slot-image" src="${escapeHtml(submission.bodyImageData || submission.imageData)}" alt="${escapeHtml(slot.category)} No.${slot.number}" />
-            <div class="slot-body">
-              <div class="slot-head">
-                <strong>No.${slot.number}</strong>
-                <span class="slot-state ${stateClass}">${slot.status}</span>
-              </div>
-              <p class="slot-value">${escapeHtml(submission.value || "내용 미입력")}</p>
-              <p class="slot-meta">${escapeHtml(slot.category)} · ${slot.submissions.length}건</p>
-              <button class="ghost-button" type="button" data-action="open-slot">보기</button>
+          <article class="slot-card${reviewClass}" data-slot="${escapeHtml(slot.key)}">
+            <div class="slot-image-wrap">
+              <img class="slot-image" src="${escapeHtml(submission.bodyImageData || submission.imageData)}" alt="${escapeHtml(slot.category)} No.${slot.number}" loading="lazy" />
+              <span class="slot-badge">No.${slot.number}</span>
+              ${slot.review ? `<span class="slot-review-badge">검증중</span>` : ""}
             </div>
           </article>
         `;
       })
-      .join("") || `<p class="locked-state"><strong>아직 조건에 맞는 제보가 없습니다.</strong></p>`;
+      .join("") || `<p class="locked-state"><strong>아직 제보가 없습니다.</strong></p>`;
 }
 
 function getReviewGroups() {
@@ -981,6 +1069,9 @@ els.adminButton.addEventListener("click", () => {
 els.tabs.forEach((tab) => {
   tab.addEventListener("click", () => {
     state.activeTab = tab.dataset.tab;
+    if (tab.dataset.tab === "board" && !canViewCategory(state.selectedCategory)) {
+      state.selectedCategory = FIXED_CATEGORIES.find(canViewCategory) || "";
+    }
     render();
   });
 });
@@ -1011,7 +1102,7 @@ document.addEventListener("paste", async (event) => {
 els.uploadForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   const recognition = state.recognition;
-  const category = normalizeCategory(recognition?.parsed.category);
+  const category = matchFixedCategory(normalizeCategory(recognition?.parsed.category));
   const number = normalizeNumber(recognition?.parsed.number);
   if (!state.imageData || !recognition?.contentKey || !category || !number) {
     alert("힌트 종류, 번호, 내용을 모두 인식한 뒤 등록할 수 있습니다.");
@@ -1056,16 +1147,18 @@ els.boardSearchInput.addEventListener("input", () => {
   renderBoard();
 });
 
-els.boardCategorySelect.addEventListener("change", () => {
-  state.selectedCategory = els.boardCategorySelect.value;
-  renderBoard();
+els.boardGrid.addEventListener("click", (event) => {
+  const card = event.target.closest("[data-slot]");
+  if (!card) return;
+  openSlot(card.dataset.slot);
 });
 
-els.boardGrid.addEventListener("click", (event) => {
-  const button = event.target.closest("[data-action='open-slot']");
+els.categoryList.addEventListener("click", (event) => {
+  const button = event.target.closest(".category-item:not([disabled])");
   if (!button) return;
-  const card = button.closest("[data-slot]");
-  openSlot(card.dataset.slot);
+  state.selectedCategory = button.dataset.category;
+  state.activeTab = "board";
+  render();
 });
 
 els.reviewList.addEventListener("click", async (event) => {
