@@ -76,6 +76,8 @@ function normalizeCategory(value) {
   return String(value || "")
     .replace(/\s+/g, " ")
     .replace(/^[^\w가-힣]+/g, "")
+    .replace(/[\\/\u2215\u2044]+/g, " ")
+    .replace(/[^\w가-힣\s.-]/g, "")
     .replace(/\s*No\s*\.?\s*\d+.*/i, "")
     .trim();
 }
@@ -184,6 +186,17 @@ function dataUrlToBlob(dataUrl) {
   return new Blob([array], { type: mime });
 }
 
+function toStorageSegment(value, fallback = "hint") {
+  const segment = String(value || "")
+    .normalize("NFKC")
+    .replace(/[\\/\u2215\u2044]+/g, "-")
+    .replace(/[^\w가-힣.-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^[-.]+|[-.]+$/g, "")
+    .slice(0, 80);
+  return segment || fallback;
+}
+
 function describeSupabaseError(error, step) {
   const message = error?.message || error?.error_description || error?.hint || JSON.stringify(error);
   return new Error(`${step} 실패: ${message}`);
@@ -198,7 +211,9 @@ async function saveSubmission(submission) {
 
   let imageUrl = submission.imageData;
   if (submission.imageData.startsWith("data:")) {
-    const path = `${submission.category}/${submission.number}/${submission.id}.jpg`;
+    const categoryPath = toStorageSegment(submission.category, "category");
+    const numberPath = toStorageSegment(submission.number, "number");
+    const path = `${categoryPath}/${numberPath}/${submission.id}.jpg`;
     const { error: uploadError } = await state.supabase.storage
       .from("hint-images")
       .upload(path, dataUrlToBlob(submission.imageData), {
@@ -212,7 +227,9 @@ async function saveSubmission(submission) {
 
   let bodyImageUrl = submission.bodyImageData || imageUrl;
   if (bodyImageUrl.startsWith("data:")) {
-    const bodyPath = `${submission.category}/${submission.number}/${submission.id}-body.jpg`;
+    const categoryPath = toStorageSegment(submission.category, "category");
+    const numberPath = toStorageSegment(submission.number, "number");
+    const bodyPath = `${categoryPath}/${numberPath}/${submission.id}-body.jpg`;
     const { error: bodyUploadError } = await state.supabase.storage
       .from("hint-images")
       .upload(bodyPath, dataUrlToBlob(bodyImageUrl), {
