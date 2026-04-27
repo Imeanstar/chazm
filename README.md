@@ -42,6 +42,8 @@ window.HINT_BOARD_CONFIG = {
 
 Supabase anon key는 브라우저 앱에서 공개되는 것을 전제로 한 키라 비밀키는 아닙니다. 하지만 RLS 정책이 느슨하면 이 키로 데이터 조회, 삽입, 수정이 가능해질 수 있습니다. 그래서 저장소에는 anon key를 커밋하지 않고, 로컬에서는 `config.local.js`로만 주입합니다.
 
+GitHub Pages에서 Supabase를 연결하려면 GitHub 저장소의 Actions secret에 `SUPABASE_PUBLISH_KEY`를 추가합니다. 배포 워크플로가 이 secret으로 `config.local.js`를 생성하므로 git 히스토리에는 key가 남지 않습니다.
+
 ## GitHub 작업 메모
 
 이 폴더는 `https://github.com/Imeanstar/chazm.git` 저장소와 연결되어 있습니다. 작업 완료 시마다 README를 갱신한 뒤 commit/push하는 흐름으로 진행합니다.

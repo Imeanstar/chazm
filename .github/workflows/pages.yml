@@ -27,6 +27,20 @@ jobs:
       - name: Setup Pages
         uses: actions/configure-pages@v5
 
+      - name: Create local config from secret
+        env:
+          SUPABASE_PUBLISH_KEY: ${{ secrets.SUPABASE_PUBLISH_KEY }}
+        shell: bash
+        run: |
+          if [ -n "$SUPABASE_PUBLISH_KEY" ]; then
+            cat > config.local.js <<EOF
+          window.HINT_BOARD_CONFIG = {
+            ...window.HINT_BOARD_CONFIG,
+            SUPABASE_PUBLISH_KEY: "$SUPABASE_PUBLISH_KEY",
+          };
+          EOF
+          fi
+
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
