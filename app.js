@@ -186,15 +186,28 @@ function dataUrlToBlob(dataUrl) {
   return new Blob([array], { type: mime });
 }
 
+function hashString(value) {
+  let hash = 5381;
+  const text = String(value || "");
+  for (let index = 0; index < text.length; index += 1) {
+    hash = (hash * 33) ^ text.charCodeAt(index);
+  }
+  return (hash >>> 0).toString(36);
+}
+
 function toStorageSegment(value, fallback = "hint") {
-  const segment = String(value || "")
+  const source = String(value || "").normalize("NFKC");
+  const ascii = source
     .normalize("NFKC")
     .replace(/[\\/\u2215\u2044]+/g, "-")
-    .replace(/[^\w가-힣.-]+/g, "-")
+    .replace(/[^A-Za-z0-9._-]+/g, "-")
     .replace(/-+/g, "-")
     .replace(/^[-.]+|[-.]+$/g, "")
     .slice(0, 80);
-  return segment || fallback;
+  if (/[^\x00-\x7F]/.test(source)) {
+    return `${ascii || fallback}-${hashString(source)}`;
+  }
+  return ascii || `${fallback}-${hashString(source)}`;
 }
 
 function describeSupabaseError(error, step) {
