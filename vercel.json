@@ -1,5 +1,5 @@
 {
-  "buildCommand": "echo \"window.HINT_BOARD_CONFIG = { ...window.HINT_BOARD_CONFIG, SUPABASE_PUBLISH_KEY: '${SUPABASE_PUBLISH_KEY}', ADMIN_CODE: '${ADMIN_CODE}' };\" > config.local.js",
+  "buildCommand": "sh build.sh",
   "outputDirectory": ".",
   "installCommand": ""
 }
