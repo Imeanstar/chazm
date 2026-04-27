@@ -1,0 +1,6 @@
+.edge-profile/
+.edge-profile-*/
+config.local.js
+preview.png
+*.log
+Thumbs.db

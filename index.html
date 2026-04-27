@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>차즘 힌트 보드</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">비공식 제보 보드</p>
+        <h1>차즘 힌트 보드</h1>
+      </div>
+      <div class="topbar-actions">
+        <span class="mode-pill" id="storageMode">로컬 모드</span>
+        <button class="ghost-button" id="adminButton" type="button">관리자</button>
+        <button class="ghost-button" id="logoutButton" type="button" hidden>로그아웃</button>
+      </div>
+    </header>
+
+    <main class="app-shell">
+      <section class="login-panel" id="loginPanel">
+        <div>
+          <p class="eyebrow">닉네임 로그인</p>
+          <h2>차즘에서 자동 생성된 닉네임을 입력해주세요.</h2>
+          <p class="subcopy">비밀번호는 받지 않습니다. 닉네임은 제보 출처 구분과 중복 제보 검토에만 사용합니다.</p>
+        </div>
+        <form class="login-form" id="loginForm">
+          <label>
+            <span>차즘 닉네임</span>
+            <input id="nicknameInput" type="text" autocomplete="nickname" placeholder="예: 차즘_1234" required />
+          </label>
+          <button class="primary-button" type="submit">시작하기</button>
+        </form>
+      </section>
+
+      <section class="workspace" id="workspace" hidden>
+        <aside class="sidebar">
+          <div class="user-card">
+            <p class="eyebrow">참여자</p>
+            <strong id="currentNickname"></strong>
+            <span id="uploadGateText"></span>
+          </div>
+          <nav class="tabs" aria-label="화면 전환">
+            <button class="tab is-active" type="button" data-tab="upload">업로드</button>
+            <button class="tab" type="button" data-tab="board">힌트 보드</button>
+            <button class="tab admin-only" type="button" data-tab="review" hidden>검증</button>
+          </nav>
+          <div class="category-list" id="categoryList"></div>
+        </aside>
+
+        <section class="content-panel" id="uploadView">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">이미지 제보</p>
+              <h2>힌트 이미지 업로드</h2>
+            </div>
+            <span class="status-badge" id="ocrStatus">OCR 대기</span>
+          </div>
+
+          <form class="upload-form" id="uploadForm">
+            <label class="dropzone" for="imageInput">
+              <input id="imageInput" type="file" accept="image/*" required />
+              <span class="dropzone-title">이미지 선택</span>
+              <span class="dropzone-copy">좌측 상단의 “힌트 종류 + No.번호”를 OCR로 읽습니다.</span>
+            </label>
+
+            <div class="preview-card" id="previewCard" hidden>
+              <img id="imagePreview" alt="업로드 이미지 미리보기" />
+              <div>
+                <p class="eyebrow">OCR 원문</p>
+                <pre id="ocrText">아직 인식 전입니다.</pre>
+              </div>
+            </div>
+
+            <div class="form-grid">
+              <label>
+                <span>힌트 종류</span>
+                <input id="categoryInput" type="text" placeholder="예: 1일차 힌트" required />
+              </label>
+              <label>
+                <span>No.</span>
+                <input id="numberInput" type="number" min="1" step="1" placeholder="예: 49" required />
+              </label>
+            </div>
+
+            <label>
+              <span>힌트 내용</span>
+              <input id="valueInput" type="text" placeholder="글자 힌트면 글자, 이미지 힌트면 간단한 설명" />
+            </label>
+
+            <label>
+              <span>메모</span>
+              <textarea id="noteInput" rows="3" placeholder="확인에 도움이 되는 설명을 적어주세요."></textarea>
+            </label>
+
+            <div class="form-actions">
+              <button class="primary-button" type="submit">제보 등록</button>
+              <button class="ghost-button" id="clearFormButton" type="reset">비우기</button>
+            </div>
+          </form>
+        </section>
+
+        <section class="content-panel" id="boardView" hidden>
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">종류별 칸 채우기</p>
+              <h2 id="boardTitle">힌트 보드</h2>
+            </div>
+            <div class="toolbar">
+              <input id="boardSearchInput" type="search" placeholder="종류, 번호, 내용 검색" />
+              <select id="boardCategorySelect" aria-label="힌트 종류">
+                <option value="">전체 종류</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="locked-state" id="lockedState" hidden>
+            <strong>이미지를 1개 이상 올린 참여자만 보드를 볼 수 있습니다.</strong>
+            <span>먼저 본인 힌트를 제보하면 종류별 보드가 열립니다.</span>
+          </div>
+          <div class="board-grid" id="boardGrid"></div>
+        </section>
+
+        <section class="content-panel" id="reviewView" hidden>
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">관리자 검증</p>
+              <h2>검증중인 칸</h2>
+            </div>
+            <span class="status-badge" id="pendingCount">0건</span>
+          </div>
+          <div class="review-list" id="reviewList"></div>
+        </section>
+      </section>
+    </main>
+
+    <dialog id="slotDialog">
+      <button class="icon-button dialog-close" id="closeDialogButton" type="button" aria-label="닫기">×</button>
+      <div id="slotDialogContent"></div>
+    </dialog>
+
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+    <script src="./config.js"></script>
+    <script src="./config.local.js"></script>
+    <script src="./app.js"></script>
+  </body>
+</html>
