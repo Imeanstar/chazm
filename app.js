@@ -255,24 +255,127 @@ function compressImage(file) {
   });
 }
 
-function cropTopLeft(dataUrl) {
+function loadImage(dataUrl) {
   return new Promise((resolve, reject) => {
     const img = new Image();
     img.onload = () => {
-      const width = Math.min(img.width, Math.round(img.width * 0.82));
-      const height = Math.min(img.height, Math.max(82, Math.round(img.height * 0.22)));
-      const canvas = document.createElement("canvas");
-      canvas.width = width;
-      canvas.height = height;
-      const context = canvas.getContext("2d");
-      context.fillStyle = "#fff";
-      context.fillRect(0, 0, width, height);
-      context.drawImage(img, 0, 0, width, height, 0, 0, width, height);
-      resolve(canvas.toDataURL("image/png"));
+      resolve(img);
     };
     img.onerror = reject;
     img.src = dataUrl;
   });
+}
+
+function isHintCardPixel(red, green, blue, alpha) {
+  if (alpha < 200) return false;
+  const luma = red * 0.2126 + green * 0.7152 + blue * 0.0722;
+  const max = Math.max(red, green, blue);
+  const min = Math.min(red, green, blue);
+  const saturation = max === 0 ? 0 : (max - min) / max;
+  const isBrightNeutral = luma > 128 && saturation < 0.55;
+  const isWarmCard = red > 165 && green > 115 && blue < 190;
+  return isBrightNeutral || isWarmCard;
+}
+
+function longestTrueRun(values) {
+  let bestStart = 0;
+  let bestEnd = values.length - 1;
+  let bestLength = 0;
+  let start = -1;
+
+  values.forEach((value, index) => {
+    if (value && start === -1) start = index;
+    if ((!value || index === values.length - 1) && start !== -1) {
+      const end = value && index === values.length - 1 ? index : index - 1;
+      const length = end - start + 1;
+      if (length > bestLength) {
+        bestStart = start;
+        bestEnd = end;
+        bestLength = length;
+      }
+      start = -1;
+    }
+  });
+
+  return { start: bestStart, end: bestEnd, length: bestLength };
+}
+
+function findHintCardRect(img) {
+  const scale = Math.min(1, 900 / Math.max(img.width, img.height));
+  const width = Math.max(1, Math.round(img.width * scale));
+  const height = Math.max(1, Math.round(img.height * scale));
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext("2d", { willReadFrequently: true });
+  context.drawImage(img, 0, 0, width, height);
+  const pixels = context.getImageData(0, 0, width, height).data;
+
+  const rowCounts = new Array(height).fill(0);
+  const colCounts = new Array(width).fill(0);
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const offset = (y * width + x) * 4;
+      if (isHintCardPixel(pixels[offset], pixels[offset + 1], pixels[offset + 2], pixels[offset + 3])) {
+        rowCounts[y] += 1;
+      }
+    }
+  }
+
+  const rowMask = rowCounts.map((count) => count / width > 0.42);
+  const yRun = longestTrueRun(rowMask);
+  if (yRun.length < height * 0.18) {
+    return { x: 0, y: 0, width: img.width, height: img.height };
+  }
+
+  for (let y = yRun.start; y <= yRun.end; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const offset = (y * width + x) * 4;
+      if (isHintCardPixel(pixels[offset], pixels[offset + 1], pixels[offset + 2], pixels[offset + 3])) {
+        colCounts[x] += 1;
+      }
+    }
+  }
+
+  const regionHeight = yRun.end - yRun.start + 1;
+  const colMask = colCounts.map((count) => count / regionHeight > 0.38);
+  const xRun = longestTrueRun(colMask);
+  if (xRun.length < width * 0.28) {
+    return { x: 0, y: 0, width: img.width, height: img.height };
+  }
+
+  return {
+    x: Math.max(0, Math.round(xRun.start / scale)),
+    y: Math.max(0, Math.round(yRun.start / scale)),
+    width: Math.min(img.width, Math.round(xRun.length / scale)),
+    height: Math.min(img.height, Math.round(yRun.length / scale)),
+  };
+}
+
+async function cropHintHeader(dataUrl) {
+  const img = await loadImage(dataUrl);
+  const rect = findHintCardRect(img);
+  const cropWidth = rect.width;
+  const cropHeight = Math.min(rect.height, Math.max(86, Math.round(rect.height * 0.2)));
+  const scale = Math.min(3, Math.max(1, 900 / cropWidth));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.round(cropWidth * scale);
+  canvas.height = Math.round(cropHeight * scale);
+  const context = canvas.getContext("2d");
+  context.fillStyle = "#fff";
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  context.drawImage(
+    img,
+    rect.x,
+    rect.y,
+    cropWidth,
+    cropHeight,
+    0,
+    0,
+    canvas.width,
+    canvas.height,
+  );
+  return canvas.toDataURL("image/png");
 }
 
 async function runOcr(dataUrl) {
@@ -280,7 +383,7 @@ async function runOcr(dataUrl) {
     return { text: "OCR 라이브러리를 불러오지 못했습니다. 종류와 번호를 직접 입력해주세요.", parsed: {} };
   }
 
-  const crop = await cropTopLeft(dataUrl);
+  const crop = await cropHintHeader(dataUrl);
   const result = await window.Tesseract.recognize(crop, "kor+eng", {
     logger: (event) => {
       if (event.status === "recognizing text") {
@@ -290,6 +393,32 @@ async function runOcr(dataUrl) {
   });
   const text = result.data.text.trim();
   return { text, parsed: parseHeader(text) };
+}
+
+async function processImageFile(file, sourceLabel = "이미지") {
+  if (!file || !file.type.startsWith("image/")) return;
+
+  els.ocrStatus.textContent = `${sourceLabel} 준비중`;
+  els.ocrStatus.classList.remove("is-warning");
+  state.imageData = await compressImage(file);
+  els.imagePreview.src = state.imageData;
+  els.previewCard.hidden = false;
+
+  try {
+    const { text, parsed } = await runOcr(state.imageData);
+    state.ocrText = text;
+    els.ocrText.textContent = text || "텍스트를 인식하지 못했습니다.";
+    if (parsed.category) els.categoryInput.value = parsed.category;
+    if (parsed.number) els.numberInput.value = parsed.number;
+    els.ocrStatus.textContent = parsed.category && parsed.number ? "OCR 완료" : "직접 확인 필요";
+    els.ocrStatus.classList.toggle("is-warning", !(parsed.category && parsed.number));
+  } catch (error) {
+    console.warn(error);
+    state.ocrText = "OCR 처리 중 오류가 났습니다. 직접 입력해주세요.";
+    els.ocrText.textContent = state.ocrText;
+    els.ocrStatus.textContent = "직접 확인 필요";
+    els.ocrStatus.classList.add("is-warning");
+  }
 }
 
 function userUploadCount() {
@@ -594,27 +723,20 @@ els.imageInput.addEventListener("change", async () => {
     return;
   }
 
-  els.ocrStatus.textContent = "이미지 준비중";
-  els.ocrStatus.classList.remove("is-warning");
-  state.imageData = await compressImage(file);
-  els.imagePreview.src = state.imageData;
-  els.previewCard.hidden = false;
+  await processImageFile(file, "이미지");
+});
 
-  try {
-    const { text, parsed } = await runOcr(state.imageData);
-    state.ocrText = text;
-    els.ocrText.textContent = text || "텍스트를 인식하지 못했습니다.";
-    if (parsed.category) els.categoryInput.value = parsed.category;
-    if (parsed.number) els.numberInput.value = parsed.number;
-    els.ocrStatus.textContent = parsed.category && parsed.number ? "OCR 완료" : "직접 확인 필요";
-    els.ocrStatus.classList.toggle("is-warning", !(parsed.category && parsed.number));
-  } catch (error) {
-    console.warn(error);
-    state.ocrText = "OCR 처리 중 오류가 났습니다. 직접 입력해주세요.";
-    els.ocrText.textContent = state.ocrText;
-    els.ocrStatus.textContent = "직접 확인 필요";
-    els.ocrStatus.classList.add("is-warning");
-  }
+document.addEventListener("paste", async (event) => {
+  const items = [...(event.clipboardData?.items || [])];
+  const imageItem = items.find((item) => item.type.startsWith("image/"));
+  if (!imageItem || !state.user) return;
+
+  const file = imageItem.getAsFile();
+  if (!file) return;
+  event.preventDefault();
+  state.activeTab = "upload";
+  render();
+  await processImageFile(file, "붙여넣기 이미지");
 });
 
 els.uploadForm.addEventListener("submit", async (event) => {
