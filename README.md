@@ -17,6 +17,7 @@ https://imeanstar.github.io/chazm/
 - 차즘 자동 생성 닉네임으로 비밀번호 없는 로그인
 - 이미지 업로드 후 좌측 상단 문구 OCR 시도
 - 모바일 전체 화면 캡처에서도 실제 힌트 카드 영역을 찾아 해당 카드 상단만 OCR
+- 분홍, 주황 등 색 있는 카드도 흑백 고대비 전처리 후 OCR
 - 파일 선택뿐 아니라 클립보드 이미지 붙여넣기 지원
 - 힌트 종류, No., 힌트사진 내용을 인식 결과로만 표시하고 제보자는 수정 불가
 - 글자 힌트는 본문 글자 OCR, 그림 힌트는 힌트사진 영역 캡처와 이미지 해시로 비교
@@ -34,6 +35,8 @@ https://imeanstar.github.io/chazm/
 1. Supabase SQL Editor에서 `supabase-schema.sql`을 실행합니다.
 2. `config.local.js`를 만들고 anon key를 넣습니다. 이 파일은 GitHub에 올리지 않습니다.
 3. 운영 전에는 `ADMIN_CODE`를 반드시 바꿔주세요.
+
+저장 실패가 나면 앱이 실패 단계와 Supabase 에러 메시지를 같이 보여줍니다. `supabase-schema.sql`은 기존 `hint-images` 버킷 설정도 다시 맞추므로, 스키마가 바뀐 뒤에는 한 번 더 실행해주세요.
 
 ```js
 window.HINT_BOARD_CONFIG = {

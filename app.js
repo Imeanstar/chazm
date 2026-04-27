@@ -184,6 +184,11 @@ function dataUrlToBlob(dataUrl) {
   return new Blob([array], { type: mime });
 }
 
+function describeSupabaseError(error, step) {
+  const message = error?.message || error?.error_description || error?.hint || JSON.stringify(error);
+  return new Error(`${step} 실패: ${message}`);
+}
+
 async function saveSubmission(submission) {
   if (!state.supabase) {
     state.submissions.unshift(submission);
@@ -198,9 +203,9 @@ async function saveSubmission(submission) {
       .from("hint-images")
       .upload(path, dataUrlToBlob(submission.imageData), {
         contentType: "image/jpeg",
-        upsert: true,
+        upsert: false,
       });
-    if (uploadError) throw uploadError;
+    if (uploadError) throw describeSupabaseError(uploadError, "원본 이미지 업로드");
     const { data } = state.supabase.storage.from("hint-images").getPublicUrl(path);
     imageUrl = data.publicUrl;
   }
@@ -212,9 +217,9 @@ async function saveSubmission(submission) {
       .from("hint-images")
       .upload(bodyPath, dataUrlToBlob(bodyImageUrl), {
         contentType: "image/jpeg",
-        upsert: true,
+        upsert: false,
       });
-    if (bodyUploadError) throw bodyUploadError;
+    if (bodyUploadError) throw describeSupabaseError(bodyUploadError, "힌트사진 영역 업로드");
     const { data } = state.supabase.storage.from("hint-images").getPublicUrl(bodyPath);
     bodyImageUrl = data.publicUrl;
   }
@@ -233,7 +238,7 @@ async function saveSubmission(submission) {
     ocr_text: submission.ocrText,
     status: submission.status,
   });
-  if (error) throw error;
+  if (error) throw describeSupabaseError(error, "제보 DB 저장");
   await loadSubmissions();
 }
 
@@ -476,6 +481,38 @@ async function hashImage(dataUrl) {
   return values.map((value) => (value >= average ? "1" : "0")).join("");
 }
 
+async function binarizeForOcr(dataUrl) {
+  const img = await loadImage(dataUrl);
+  const canvas = document.createElement("canvas");
+  const scale = Math.min(3, Math.max(1, 1000 / img.width));
+  canvas.width = Math.round(img.width * scale);
+  canvas.height = Math.round(img.height * scale);
+  const context = canvas.getContext("2d", { willReadFrequently: true });
+  context.drawImage(img, 0, 0, canvas.width, canvas.height);
+  const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
+  const pixels = imageData.data;
+  const lumas = [];
+
+  for (let offset = 0; offset < pixels.length; offset += 4) {
+    lumas.push(pixels[offset] * 0.2126 + pixels[offset + 1] * 0.7152 + pixels[offset + 2] * 0.0722);
+  }
+
+  const average = lumas.reduce((sum, value) => sum + value, 0) / lumas.length;
+  const threshold = Math.max(85, Math.min(170, average - 28));
+
+  for (let offset = 0; offset < pixels.length; offset += 4) {
+    const luma = pixels[offset] * 0.2126 + pixels[offset + 1] * 0.7152 + pixels[offset + 2] * 0.0722;
+    const value = luma < threshold ? 0 : 255;
+    pixels[offset] = value;
+    pixels[offset + 1] = value;
+    pixels[offset + 2] = value;
+    pixels[offset + 3] = 255;
+  }
+
+  context.putImageData(imageData, 0, 0);
+  return canvas.toDataURL("image/png");
+}
+
 function normalizeContentText(value) {
   return String(value || "")
     .replace(/[^\w가-힣]/g, "")
@@ -489,15 +526,25 @@ async function runOcr(dataUrl) {
   }
 
   const crop = await cropHintHeader(dataUrl);
-  const result = await window.Tesseract.recognize(crop, "kor+eng", {
-    logger: (event) => {
-      if (event.status === "recognizing text") {
-        els.ocrStatus.textContent = `OCR ${Math.round(event.progress * 100)}%`;
-      }
-    },
-  });
-  const text = result.data.text.trim();
-  return { text, parsed: parseHeader(text) };
+  const variants = [await binarizeForOcr(crop), crop];
+  const attempts = [];
+
+  for (const variant of variants) {
+    const result = await window.Tesseract.recognize(variant, "kor+eng", {
+      logger: (event) => {
+        if (event.status === "recognizing text") {
+          els.ocrStatus.textContent = `OCR ${Math.round(event.progress * 100)}%`;
+        }
+      },
+      tessedit_pageseg_mode: "7",
+    });
+    const text = result.data.text.trim();
+    const parsed = parseHeader(text);
+    attempts.push({ text, parsed });
+    if (parsed.category && parsed.number) return { text, parsed };
+  }
+
+  return attempts[0] || { text: "", parsed: {} };
 }
 
 async function recognizeHint(dataUrl) {
@@ -518,7 +565,10 @@ async function recognizeHint(dataUrl) {
 
   let bodyText = "";
   try {
-    const bodyResult = await window.Tesseract.recognize(bodyImageData, "kor+eng");
+    const bodyOcrImage = await binarizeForOcr(bodyImageData);
+    const bodyResult = await window.Tesseract.recognize(bodyOcrImage, "kor+eng", {
+      tessedit_pageseg_mode: "8",
+    });
     bodyText = bodyResult.data.text.trim();
   } catch (error) {
     console.warn(error);
@@ -963,7 +1013,7 @@ els.uploadForm.addEventListener("submit", async (event) => {
     render();
   } catch (error) {
     console.warn(error);
-    alert("저장에 실패했습니다. Supabase 설정이나 저장 공간을 확인해주세요.");
+    alert(`저장에 실패했습니다.\n\n${error?.message || "Supabase 설정이나 저장 공간을 확인해주세요."}`);
   }
 });
 

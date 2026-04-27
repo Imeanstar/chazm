@@ -40,6 +40,13 @@ values (
 )
 on conflict (id) do nothing;
 
+update storage.buckets
+set
+  public = true,
+  file_size_limit = 5242880,
+  allowed_mime_types = array['image/jpeg', 'image/png', 'image/webp']
+where id = 'hint-images';
+
 alter table public.hint_submissions enable row level security;
 
 drop policy if exists "mvp read hint submissions" on public.hint_submissions;
@@ -70,6 +77,7 @@ create policy "mvp update hint submissions"
 
 drop policy if exists "mvp read hint images" on storage.objects;
 drop policy if exists "mvp upload hint images" on storage.objects;
+drop policy if exists "mvp update hint images" on storage.objects;
 
 create policy "mvp read hint images"
   on storage.objects
@@ -81,4 +89,11 @@ create policy "mvp upload hint images"
   on storage.objects
   for insert
   to anon
+  with check (bucket_id = 'hint-images');
+
+create policy "mvp update hint images"
+  on storage.objects
+  for update
+  to anon
+  using (bucket_id = 'hint-images')
   with check (bucket_id = 'hint-images');
