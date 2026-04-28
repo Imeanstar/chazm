@@ -2,7 +2,7 @@ create table if not exists public.hint_submissions (
   id uuid primary key default gen_random_uuid(),
   nickname text not null,
   category text not null,
-  hint_no integer not null check (hint_no > 0),
+  hint_no integer not null check (hint_no between 1 and 50),
   hint_value text,
   content_kind text not null default 'unknown' check (content_kind in ('text', 'image', 'unknown')),
   content_key text,
@@ -66,6 +66,7 @@ create policy "mvp insert hint submissions"
   with check (
     char_length(trim(nickname)) between 1 and 80
     and char_length(trim(category)) between 1 and 80
+    and hint_no between 1 and 50
   );
 
 create policy "mvp update hint submissions"

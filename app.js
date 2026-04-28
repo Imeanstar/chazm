@@ -1108,6 +1108,10 @@ els.uploadForm.addEventListener("submit", async (event) => {
     alert("힌트 종류, 번호, 내용을 모두 인식한 뒤 등록할 수 있습니다.");
     return;
   }
+  if (number < 1 || number > DEFAULT_SLOT_COUNT) {
+    alert(`No.${number}은 등록할 수 없는 번호입니다. 힌트 번호는 1~${DEFAULT_SLOT_COUNT} 범위여야 합니다.`);
+    return;
+  }
 
   const submission = {
     id: createId(),
