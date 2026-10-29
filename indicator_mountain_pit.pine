@@ -1,56 +1,67 @@
 //@version=5
-// 산 / 구덩이(골파기) 지표 — 텔레그램 채널 방장 지표 복제판
+// 산 / 구덩이(골파기) 지표 — 텔레그램 채널 방장 "주황 지표 (cci, 수정값)" 복제판
 //
-// 근거:
-//  - 방장 값: "+30대", "비트 일봉 -17 / 테더도미 +24", "-36 / +46", "과매도는 -100 ~ -400"
-//  - 가격 단위가 전혀 다른 BTC(10만 달러대)와 USDT 도미넌스(5%대)가 같은 크기의 값을 낸다 → 가격 단위에 무관한 지표
-//  - 위아래 한계가 없고, ±100이 과매수/과매도 기준이며, 극단값이 -400까지 간다 → CCI
+// 확인된 사실 (채널 글 11,105건 분석):
+//  - 방장이 2025-03-13 글에서 "주황 지표 (cci, 수정값)"이라고 직접 밝혔다.
+//  - 산 = +100 위(과매수), 구덩이 = -100 아래(과매도). 깊은 구덩이는 -200 ~ -400.
+//  - 패널이 단기 / 중기 / 장기 세 개다. 글에서 주로 인용하는 "일봉 수치"는 가운데 중기 값이다.
+//  - 4시간봉에서 인용한 값 두 개(-87, -79)는 표준 CCI(20)과 2~5점 차이로 일치했다.
+//  - 일봉 중기 값 16개는 평균 길이 약 60봉의 CCI 계열과 가장 잘 맞았다(오차 약 ±8).
+//    편차 길이를 40~50봉으로 따로 두면 배율 보정 없이 맞는다. 정확한 수정 방식은 아직 확정 전이다.
 //
-// 사용법:
-//  - 1시간/4시간/1일/3일 봉에서 쓴다. HTF 입력을 켜면 큰 시간대 CCI를 작은 시간대 차트에 같이 그린다.
-//  - 산   : 빨간 선이 +100 위 (과매수권)
-//  - 구덩이: 빨간 선이 -100 아래 (과매도권). 깊으면 -200 ~ -400
-//  - 매매 흐름: 구덩이 → 산 으로 가는 구간이 수익 구간. 산 뒤에 선이 꺾이면 욕심을 줄인다.
+// 사용법: 일봉 차트에 올리고 가운데(중기) 선을 본다. 4시간/1시간 차트에서는 단기 선을 본다.
 
-indicator("산/구덩이 CCI (HTF/LTF)", shorttitle="산구덩이", overlay=false)
+indicator("산/구덩이 CCI (단기/중기/장기)", shorttitle="산구덩이", overlay=false)
 
 // ---- 입력 ----
-len      = input.int(20, "CCI 기간", minval=2)
-src      = input.source(hlc3, "소스")
-smooth   = input.int(1, "평활 기간 (1 = 없음)", minval=1)
-htfOn    = input.bool(true, "HTF 선 표시")
-htfTf    = input.timeframe("D", "HTF 시간대")
-obLvl    = input.float(100, "산 기준 (과매수)")
-osLvl    = input.float(-100, "구덩이 기준 (과매도)")
-deepLvl  = input.float(-200, "깊은 구덩이")
+src       = input.source(hlc3, "소스")
+devType   = input.string("std", "편차 방식", options=["mad", "std"], tooltip="mad = 표준 CCI(평균절대편차), std = 표준편차")
+showS     = input.bool(true,  "단기 표시")
+lenS      = input.int(20, "단기 길이", minval=2)
+devS      = input.int(20, "단기 편차 길이", minval=2)
+showM     = input.bool(true,  "중기 표시")
+lenM      = input.int(60, "중기 평균 길이", minval=2)
+devM      = input.int(50, "중기 편차 길이", minval=2)
+showL     = input.bool(false, "장기 표시")
+lenL      = input.int(120, "장기 평균 길이", minval=2)
+devL      = input.int(100, "장기 편차 길이", minval=2)
+htfOn     = input.bool(false, "중기를 다른 시간대로 계산")
+htfTf     = input.timeframe("D", "그 시간대")
+obLvl     = input.float(100, "산 기준")
+osLvl     = input.float(-100, "구덩이 기준")
 
-// ---- 계산 ----
-cciRaw   = ta.cci(src, len)
-cciLTF   = smooth > 1 ? ta.sma(cciRaw, smooth) : cciRaw
-cciHTF   = request.security(syminfo.tickerid, htfTf, cciLTF, lookahead=barmerge.lookahead_off)
+// ---- 수정 CCI: 평균 길이와 편차 길이를 따로 둔다 ----
+f_cci(_src, _lenMean, _lenDev, _devType) =>
+    _ma = ta.sma(_src, _lenMean)
+    _dev = _devType == "mad" ? ta.dev(_src, _lenDev) : ta.stdev(_src, _lenDev)
+    (_src - _ma) / (0.015 * _dev)
 
-// ---- 상태 ----
-isMountain = cciLTF >= obLvl
-isPit      = cciLTF <= osLvl
-// 산을 만든 뒤 꺾이기 시작: 직전 3봉 안에 과매수였고, 지금 선이 내려오는 중
-turningDown = ta.barssince(isMountain) <= 3 and cciLTF < cciLTF[1] and cciLTF < obLvl
-// 구덩이 뒤 돌아서기: 직전 3봉 안에 과매도였고, 지금 선이 올라오는 중
-turningUp   = ta.barssince(isPit) <= 3 and cciLTF > cciLTF[1] and cciLTF > osLvl
+cciS = f_cci(src, lenS, devS, devType)
+cciM_local = f_cci(src, lenM, devM, devType)
+cciM = htfOn ? request.security(syminfo.tickerid, htfTf, cciM_local, lookahead=barmerge.lookahead_off) : cciM_local
+cciL = f_cci(src, lenL, devL, devType)
+
+// ---- 상태 (중기 기준) ----
+isMountain = cciM >= obLvl
+isPit      = cciM <= osLvl
+turningDown = ta.barssince(isMountain) <= 3 and cciM < cciM[1] and cciM < obLvl
+turningUp   = ta.barssince(isPit) <= 3 and cciM > cciM[1] and cciM > osLvl
 
 // ---- 그리기 ----
-plot(cciLTF, "LTF CCI (빨강)", color=color.red, linewidth=2)
-plot(htfOn ? cciHTF : na, "HTF CCI (파랑)", color=color.new(color.blue, 0), linewidth=2)
+plot(showS ? cciS : na, "단기", color=color.new(color.gray, 30), linewidth=1)
+plot(showM ? cciM : na, "중기 (주황)", color=color.orange, linewidth=2)
+plot(showL ? cciL : na, "장기", color=color.new(color.blue, 0), linewidth=2)
 hline(0, "0", color=color.gray)
 hline(obLvl, "산", color=color.new(color.red, 40))
 hline(osLvl, "구덩이", color=color.new(color.green, 40))
-hline(deepLvl, "깊은 구덩이", color=color.new(color.green, 70), linestyle=hline.style_dotted)
-hline(-400, "-400", color=color.new(color.green, 85), linestyle=hline.style_dotted)
+hline(-200, "-200", color=color.new(color.green, 70), linestyle=hline.style_dotted)
+hline(200, "+200", color=color.new(color.red, 70), linestyle=hline.style_dotted)
 bgcolor(isMountain ? color.new(color.red, 85) : isPit ? color.new(color.green, 85) : na)
 plotshape(turningDown, "산 뒤 꺾임", style=shape.triangledown, location=location.top, color=color.red, size=size.tiny)
 plotshape(turningUp, "구덩이 뒤 반등", style=shape.triangleup, location=location.bottom, color=color.green, size=size.tiny)
 
 // ---- 알림 ----
-alertcondition(isMountain and not isMountain[1], "산 진입", "CCI가 과매수권(산)에 들어갔다")
-alertcondition(isPit and not isPit[1], "구덩이 진입", "CCI가 과매도권(구덩이)에 들어갔다")
-alertcondition(turningDown, "산 뒤 꺾임", "산을 만든 뒤 CCI가 꺾이기 시작했다")
-alertcondition(turningUp, "구덩이 뒤 반등", "구덩이 뒤 CCI가 올라오기 시작했다")
+alertcondition(isMountain and not isMountain[1], "산 진입", "중기 CCI가 과매수권(산)에 들어갔다")
+alertcondition(isPit and not isPit[1], "구덩이 진입", "중기 CCI가 과매도권(구덩이)에 들어갔다")
+alertcondition(turningDown, "산 뒤 꺾임", "산을 만든 뒤 중기 CCI가 꺾이기 시작했다")
+alertcondition(turningUp, "구덩이 뒤 반등", "구덩이 뒤 중기 CCI가 올라오기 시작했다")

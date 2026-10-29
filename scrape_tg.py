@@ -62,11 +62,19 @@ def main():
     ap.add_argument("out")
     ap.add_argument("--max-pages", type=int, default=200)
     ap.add_argument("--sleep", type=float, default=1.0)
+    ap.add_argument("--before", type=int, default=None, help="이 id보다 오래된 글부터 수집")
+    ap.add_argument("--append", action="store_true", help="기존 out 파일에 합친다")
     args = ap.parse_args()
 
     base = f"https://t.me/s/{args.channel}"
     all_posts = {}
-    before = None
+    if args.append:
+        try:
+            for p in json.load(open(args.out, encoding="utf-8")):
+                all_posts[p["id"]] = p
+        except FileNotFoundError:
+            pass
+    before = args.before
     for page_no in range(args.max_pages):
         url = base if before is None else f"{base}?before={before}"
         try:

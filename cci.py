@@ -1,29 +1,40 @@
 #!/usr/bin/env python3
-"""산/구덩이 지표(CCI 기반) 파이썬 구현.
+"""산/구덩이 지표(수정 CCI) 파이썬 구현.
 
 사용 예:
     import pandas as pd
     from cci import cci, state
     df = ...  # 열: o,h,l,c (시간 오름차순)
-    df["cci"] = cci(df)
-    df["state"] = state(df["cci"])
+    df["short"] = cci(df, 20)                 # 단기: 표준 CCI(20)
+    df["mid"]   = cci(df, 60, dev_len=50, dev="std")   # 중기: 방장 일봉 값과 가장 가까운 설정
+    df["state"] = state(df["mid"])
 
-- cci(): 표준 CCI. (hlc3 - SMA(hlc3,n)) / (0.015 * 평균절대편차)
+- cci(): (src - SMA(src, n)) / (0.015 * 편차). 편차는 평균절대편차(mad) 또는 표준편차(std).
+  dev_len을 주면 편차만 다른 길이로 계산한다.
 - state(): "산"(>= +100), "구덩이"(<= -100), "" (중립)
-- htf_cci(): 큰 시간대 캔들로 CCI를 구한 뒤 작은 시간대 인덱스에 맞춰 펼친다.
+- htf_cci(): 큰 시간대 캔들로 계산한 뒤 작은 시간대 인덱스에 맞춰 펼친다.
 """
 import numpy as np
 import pandas as pd
 
 
-def cci(df: pd.DataFrame, n: int = 20, smooth: int = 1) -> pd.Series:
-    tp = (df["h"] + df["l"] + df["c"]) / 3
+def _source(df: pd.DataFrame, src: str) -> pd.Series:
+    if src == "hlc3":
+        return (df["h"] + df["l"] + df["c"]) / 3
+    if src == "ohlc4":
+        return (df["o"] + df["h"] + df["l"] + df["c"]) / 4
+    return df["c"]
+
+
+def cci(df: pd.DataFrame, n: int = 20, dev_len: int | None = None, dev: str = "mad", src: str = "hlc3") -> pd.Series:
+    tp = _source(df, src)
     ma = tp.rolling(n).mean()
-    mad = tp.rolling(n).apply(lambda x: np.mean(np.abs(x - x.mean())), raw=True)
-    out = (tp - ma) / (0.015 * mad)
-    if smooth > 1:
-        out = out.rolling(smooth).mean()
-    return out.rename("cci")
+    m = dev_len or n
+    if dev == "std":
+        d = tp.rolling(m).std()
+    else:
+        d = tp.rolling(m).apply(lambda x: np.mean(np.abs(x - x.mean())), raw=True)
+    return ((tp - ma) / (0.015 * d)).rename("cci")
 
 
 def state(c: pd.Series, ob: float = 100, os_: float = -100) -> pd.Series:
@@ -35,8 +46,8 @@ def resample_ohlc(df: pd.DataFrame, rule: str) -> pd.DataFrame:
     return df.resample(rule).agg({"o": "first", "h": "max", "l": "min", "c": "last"}).dropna()
 
 
-def htf_cci(df: pd.DataFrame, rule: str, n: int = 20) -> pd.Series:
-    h = cci(resample_ohlc(df, rule), n)
+def htf_cci(df: pd.DataFrame, rule: str, n: int = 20, **kw) -> pd.Series:
+    h = cci(resample_ohlc(df, rule), n, **kw)
     return h.reindex(df.index, method="ffill").rename(f"cci_{rule}")
 
 
@@ -50,12 +61,9 @@ def turning_points(c: pd.Series, lookback: int = 3, ob: float = 100, os_: float 
 
 
 if __name__ == "__main__":
-    # 자가 점검: 급등 뒤 급락 가짜 데이터에서 산 → 구덩이가 나오는지 본다.
-    idx = pd.date_range("2026-01-01", periods=120, freq="D", tz="UTC")
-    p = np.concatenate([np.linspace(100, 100, 40), np.linspace(100, 140, 30), np.linspace(140, 95, 20), np.linspace(95, 105, 30)])
-    df = pd.DataFrame({"o": p, "h": p * 1.01, "l": p * 0.99, "c": p}, index=idx)
-    df["cci"] = cci(df)
-    df["state"] = state(df["cci"])
-    print(df["cci"].describe().round(1))
-    print(df[df["state"] != ""]["state"].value_counts())
-    print("min:", round(df["cci"].min(), 1), "max:", round(df["cci"].max(), 1))
+    import sys
+    path = sys.argv[1] if len(sys.argv) > 1 else "data/upbit_KRW-BTC_1d.csv"
+    df = pd.read_csv(path, index_col=0, parse_dates=True)
+    out = pd.DataFrame({"close": df.c, "short20": cci(df, 20), "mid60": cci(df, 60, 50, "std")})
+    out["state"] = state(out["mid60"])
+    print(out.tail(15).round(1).to_string())

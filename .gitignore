@@ -3,5 +3,6 @@ __pycache__/
 .venv/
 data/*.json
 data/*.csv
+!data/values_btc.csv
 data/images/
 .env
