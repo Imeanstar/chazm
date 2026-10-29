@@ -2,6 +2,13 @@
 
 텔레그램 채널 `t.me/coin500Bking` 방장이 쓰는 개인 지표값을 모아, 어떤 공식으로 만든 값인지 찾는 프로젝트다.
 
+**결론: CCI(Commodity Channel Index) 기반 지표다.** 근거와 매매 규칙은 `ANALYSIS.md`에 있다.
+
+## 바로 쓰기
+
+- 트레이딩뷰: `indicator_mountain_pit.pine` 내용을 Pine 에디터에 붙여 넣고 저장한다.
+- 파이썬: `cci.py`의 `cci(df)` 를 쓴다.
+
 ## 절차
 
 1. 채널 글을 모은다.
@@ -37,6 +44,11 @@ python3 -I fit_indicator.py data/values.csv --exchange binance --symbol BTCUSDT 
 이 스크립트는 `t.me`, `api.binance.com`, `api.upbit.com`에 접속한다. 클라우드 세션에서는 환경 설정의 Allowed domains에 이 호스트를 추가해야 한다.
 
 ## 파일
+
+- `ANALYSIS.md` : 역분석 결과와 매매 규칙
+- `indicator_mountain_pit.pine` : 트레이딩뷰 복제 지표
+- `cci.py` : 파이썬 구현
+- `verify_posts.py` : 방장 값과 계산값 비교
 
 - `scrape_tg.py` : 공개 채널 글 수집
 - `extract_values.py` : 글에서 숫자와 문맥 추출

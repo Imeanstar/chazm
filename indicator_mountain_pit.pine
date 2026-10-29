@@ -1,0 +1,56 @@
+//@version=5
+// 산 / 구덩이(골파기) 지표 — 텔레그램 채널 방장 지표 복제판
+//
+// 근거:
+//  - 방장 값: "+30대", "비트 일봉 -17 / 테더도미 +24", "-36 / +46", "과매도는 -100 ~ -400"
+//  - 가격 단위가 전혀 다른 BTC(10만 달러대)와 USDT 도미넌스(5%대)가 같은 크기의 값을 낸다 → 가격 단위에 무관한 지표
+//  - 위아래 한계가 없고, ±100이 과매수/과매도 기준이며, 극단값이 -400까지 간다 → CCI
+//
+// 사용법:
+//  - 1시간/4시간/1일/3일 봉에서 쓴다. HTF 입력을 켜면 큰 시간대 CCI를 작은 시간대 차트에 같이 그린다.
+//  - 산   : 빨간 선이 +100 위 (과매수권)
+//  - 구덩이: 빨간 선이 -100 아래 (과매도권). 깊으면 -200 ~ -400
+//  - 매매 흐름: 구덩이 → 산 으로 가는 구간이 수익 구간. 산 뒤에 선이 꺾이면 욕심을 줄인다.
+
+indicator("산/구덩이 CCI (HTF/LTF)", shorttitle="산구덩이", overlay=false)
+
+// ---- 입력 ----
+len      = input.int(20, "CCI 기간", minval=2)
+src      = input.source(hlc3, "소스")
+smooth   = input.int(1, "평활 기간 (1 = 없음)", minval=1)
+htfOn    = input.bool(true, "HTF 선 표시")
+htfTf    = input.timeframe("D", "HTF 시간대")
+obLvl    = input.float(100, "산 기준 (과매수)")
+osLvl    = input.float(-100, "구덩이 기준 (과매도)")
+deepLvl  = input.float(-200, "깊은 구덩이")
+
+// ---- 계산 ----
+cciRaw   = ta.cci(src, len)
+cciLTF   = smooth > 1 ? ta.sma(cciRaw, smooth) : cciRaw
+cciHTF   = request.security(syminfo.tickerid, htfTf, cciLTF, lookahead=barmerge.lookahead_off)
+
+// ---- 상태 ----
+isMountain = cciLTF >= obLvl
+isPit      = cciLTF <= osLvl
+// 산을 만든 뒤 꺾이기 시작: 직전 3봉 안에 과매수였고, 지금 선이 내려오는 중
+turningDown = ta.barssince(isMountain) <= 3 and cciLTF < cciLTF[1] and cciLTF < obLvl
+// 구덩이 뒤 돌아서기: 직전 3봉 안에 과매도였고, 지금 선이 올라오는 중
+turningUp   = ta.barssince(isPit) <= 3 and cciLTF > cciLTF[1] and cciLTF > osLvl
+
+// ---- 그리기 ----
+plot(cciLTF, "LTF CCI (빨강)", color=color.red, linewidth=2)
+plot(htfOn ? cciHTF : na, "HTF CCI (파랑)", color=color.new(color.blue, 0), linewidth=2)
+hline(0, "0", color=color.gray)
+hline(obLvl, "산", color=color.new(color.red, 40))
+hline(osLvl, "구덩이", color=color.new(color.green, 40))
+hline(deepLvl, "깊은 구덩이", color=color.new(color.green, 70), linestyle=hline.style_dotted)
+hline(-400, "-400", color=color.new(color.green, 85), linestyle=hline.style_dotted)
+bgcolor(isMountain ? color.new(color.red, 85) : isPit ? color.new(color.green, 85) : na)
+plotshape(turningDown, "산 뒤 꺾임", style=shape.triangledown, location=location.top, color=color.red, size=size.tiny)
+plotshape(turningUp, "구덩이 뒤 반등", style=shape.triangleup, location=location.bottom, color=color.green, size=size.tiny)
+
+// ---- 알림 ----
+alertcondition(isMountain and not isMountain[1], "산 진입", "CCI가 과매수권(산)에 들어갔다")
+alertcondition(isPit and not isPit[1], "구덩이 진입", "CCI가 과매도권(구덩이)에 들어갔다")
+alertcondition(turningDown, "산 뒤 꺾임", "산을 만든 뒤 CCI가 꺾이기 시작했다")
+alertcondition(turningUp, "구덩이 뒤 반등", "구덩이 뒤 CCI가 올라오기 시작했다")
