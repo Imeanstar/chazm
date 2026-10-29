@@ -6,7 +6,8 @@
     from cci import cci, state
     df = ...  # 열: o,h,l,c (시간 오름차순)
     df["short"] = cci(df, 20)                 # 단기: 표준 CCI(20)
-    df["mid"]   = cci(df, 60, dev_len=50, dev="std")   # 중기: 방장 일봉 값과 가장 가까운 설정
+    df["mid"]   = cci(df, 58, dev_len=50, dev="std")   # 중기(일봉): 방장 값 18개와 오차 ±8
+    # 주봉 차트: cci(df_weekly, 10)   # 방장 주봉 값과 일치
     df["state"] = state(df["mid"])
 
 - cci(): (src - SMA(src, n)) / (0.015 * 편차). 편차는 평균절대편차(mad) 또는 표준편차(std).
@@ -64,6 +65,6 @@ if __name__ == "__main__":
     import sys
     path = sys.argv[1] if len(sys.argv) > 1 else "data/upbit_KRW-BTC_1d.csv"
     df = pd.read_csv(path, index_col=0, parse_dates=True)
-    out = pd.DataFrame({"close": df.c, "short20": cci(df, 20), "mid60": cci(df, 60, 50, "std")})
-    out["state"] = state(out["mid60"])
+    out = pd.DataFrame({"close": df.c, "short20": cci(df, 20), "mid58": cci(df, 58, 50, "std")})
+    out["state"] = state(out["mid58"])
     print(out.tail(15).round(1).to_string())
