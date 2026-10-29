@@ -1,63 +1,44 @@
-# 차즘 힌트 보드
+# 텔레그램 채널 지표 역분석
 
-참여자가 직접 올린 힌트 이미지를 OCR로 읽어 `힌트 종류 + No.번호` 칸에 자동 배치하는 웹 MVP입니다.
+텔레그램 채널 `t.me/coin500Bking` 방장이 쓰는 개인 지표값을 모아, 어떤 공식으로 만든 값인지 찾는 프로젝트다.
 
-## 바로 보기
+## 절차
 
-GitHub Pages: https://imeanstar.github.io/chazm/
+1. 채널 글을 모은다.
 
-## 현재 기능
-
-- 차즘 자동 생성 닉네임으로 비밀번호 없는 로그인
-- 이미지 업로드 후 좌측 상단 문구 OCR 시도
-- 모바일 전체 화면 캡처에서도 실제 힌트 카드 영역을 찾아 해당 카드 상단만 OCR
-- 카드 내부에 이미지가 삽입된 경우에도 카드 헤더 영역 정상 감지
-- 분홍, 주황 등 색 있는 카드도 흑백 고대비 전처리 후 OCR
-- OCR 결과에 한글, `/` 같은 문자가 섞여도 Supabase Storage 경로는 ASCII 안전 값으로 변환
-- 파일 선택뿐 아니라 클립보드 이미지 붙여넣기 지원
-- 힌트 종류, No., 힌트사진 내용을 인식 결과로만 표시하고 제보자는 수정 불가
-- 글자 힌트는 본문 글자 OCR, 그림 힌트는 힌트사진 영역 캡처와 이미지 해시로 비교
-  - 이미지 판별: 어두운 픽셀 비율 + 픽셀 간 밝기 분산 + 채도 비율 3가지 기준 복합 사용
-- **고정 카테고리 탭 보드**: 1일차~6일차, 견적분석, 친구초대 8개 탭으로 구성
-  - 본인이 제보한 카테고리 탭만 열람 가능 (제보 없는 탭은 🔒 잠금)
-  - 관리자는 전체 탭 열람 가능
-- 카테고리 탭 선택 시 No.1부터 기본 50칸 표시
-  - 빈 슬롯: 번호만 표시
-  - 채워진 슬롯: 이미지 전체 표시 + 번호 배지 오버레이
-- OCR 인식된 카테고리를 고정 탭 이름으로 자동 정규화 (`matchFixedCategory`)
-- 같은 종류와 번호가 비어 있으면 바로 확정
-- 같은 종류와 번호가 이미 있고 내용이 같으면 제보자에게 열람 권한 부여
-- 같은 종류와 번호가 이미 있고 내용이 다르면 `검증중` 표시
-- 관리자 모드에서 후보 이미지 중 하나를 확정
-- 이미지를 1개 이상 올린 닉네임만 보드 화면 열람
-- Supabase anon key는 로컬 전용 `config.local.js`에서만 사용
-
-## Supabase 설정
-
-1. Supabase SQL Editor에서 `supabase-schema.sql`을 실행합니다.
-2. `config.local.js`를 만들고 anon key를 넣습니다. 이 파일은 GitHub에 올리지 않습니다.
-3. 운영 전에는 `ADMIN_CODE`를 반드시 바꿔주세요.
-
-저장 실패가 나면 앱이 실패 단계와 Supabase 에러 메시지를 같이 보여줍니다. `supabase-schema.sql`은 기존 `hint-images` 버킷 설정도 다시 맞추므로, 스키마가 바뀐 뒤에는 한 번 더 실행해주세요.
-
-```js
-window.HINT_BOARD_CONFIG = {
-  SUPABASE_URL: "https://vnpcqikgrdluzpcywvee.supabase.co",
-  SUPABASE_PUBLISH_KEY: "여기에 anon key",
-  ADMIN_CODE: "검증용 관리자 코드",
-};
+```bash
+python3 -I scrape_tg.py coin500Bking data/posts.json
 ```
 
-## 공개 키 처리
+2. 글에서 지표값 후보 숫자를 뽑는다. 결과를 열어 보고 진짜 지표값만 남긴다.
 
-Supabase anon key는 브라우저 앱에서 공개되는 것을 전제로 한 키라 비밀키는 아닙니다. 하지만 RLS 정책이 느슨하면 이 키로 데이터 조회, 삽입, 수정이 가능해질 수 있습니다. 그래서 저장소에는 anon key를 커밋하지 않고, 로컬에서는 `config.local.js`로만 주입합니다.
+```bash
+python3 -I extract_values.py data/posts.json data/candidates.csv --keyword 지표
+```
 
-GitHub Pages에서 Supabase를 연결하려면 GitHub 저장소의 Actions secret에 `SUPABASE_PUBLISH_KEY`를 추가합니다. 배포 워크플로가 이 secret으로 `config.local.js`를 생성하므로 git 히스토리에는 key가 남지 않습니다.
+3. 확정한 값을 `data/values.csv`에 아래 형식으로 적는다.
 
-## GitHub 작업 메모
+```
+datetime,symbol,value
+2026-10-20 09:00,BTCUSDT,37.2
+```
 
-이 폴더는 `https://github.com/Imeanstar/chazm.git` 저장소와 연결되어 있습니다. 작업 완료 시마다 README를 갱신한 뒤 commit/push하는 흐름으로 진행합니다.
+4. 후보 지표 공식과 비교한다. 오차(rmse)가 작은 순으로 나온다.
 
-## 중요한 보안 메모
+```bash
+pip install -r requirements.txt
+python3 -I fit_indicator.py data/values.csv --exchange binance --symbol BTCUSDT --interval 4h
+```
 
-닉네임만 받는 방식은 진짜 인증이 아닙니다. 지금 구현의 보드 잠금과 관리자 코드는 MVP용 클라이언트 제어입니다. 공개 운영에서 조작을 제대로 막으려면 Supabase Auth, 관리자 계정, 또는 Edge Function으로 검증 API를 따로 잠그는 구성이 필요합니다.
+5. 맞는 공식을 찾으면 Pine Script와 파이썬 함수로 정리한다.
+
+## 네트워크
+
+이 스크립트는 `t.me`, `api.binance.com`, `api.upbit.com`에 접속한다. 클라우드 세션에서는 환경 설정의 Allowed domains에 이 호스트를 추가해야 한다.
+
+## 파일
+
+- `scrape_tg.py` : 공개 채널 글 수집
+- `extract_values.py` : 글에서 숫자와 문맥 추출
+- `fit_indicator.py` : 캔들 수집 + 후보 지표 계산 + 최소제곱 맞춤
+- `data/` : 수집 결과 (git에 올리지 않음)

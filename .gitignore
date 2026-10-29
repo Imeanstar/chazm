@@ -1,6 +1,7 @@
-.edge-profile/
-.edge-profile-*/
-config.local.js
-preview.png
-*.log
-Thumbs.db
+__pycache__/
+*.pyc
+.venv/
+data/*.json
+data/*.csv
+data/images/
+.env
